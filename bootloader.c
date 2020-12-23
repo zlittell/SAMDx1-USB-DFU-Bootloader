@@ -44,7 +44,9 @@ NOTES:
 #include "usb_descriptors.h"
 
 /*- Definitions -------------------------------------------------------------*/
-#define USE_DBL_TAP /* comment out to use GPIO input for bootloader entry */
+//#define USE_DBL_TAP /* this uses reset double tap bootloader entry */
+//#define USE_IO_TAP /* this uses GPIO input for bootloader entry */
+#define USE_MEMORY_TAP /* this uses value of memory location for bootloader entry */
 #define USB_CMD(dir, rcpt, type) ((USB_##dir##_TRANSFER << 7) | (USB_##type##_REQUEST << 5) | (USB_##rcpt##_RECIPIENT << 0))
 #define SIMPLE_USB_CMD(rcpt, type) ((USB_##type##_REQUEST << 5) | (USB_##rcpt##_RECIPIENT << 0))
 
@@ -229,11 +231,14 @@ static void USB_Service(void)
   extern int __RAM_segment_used_end__;
   static volatile uint32_t *DBL_TAP_PTR = (volatile uint32_t *)(&__RAM_segment_used_end__);
   #define DBL_TAP_MAGIC 0xf02669ef
+#elif defined(USE_MEMORY_TAP)
+  #define BOOTLOADERVARIABLE (*((volatile uint32_t *) 0x20000000))
 #endif
 
 void bootloader(void)
 {
-#ifndef USE_DBL_TAP
+  goto run_bootloader;
+#ifdef USE_IO_TAP
   /* configure PA15 (bootloader entry pin used by SAM-BA) as input pull-up */
   PORT->Group[0].PINCFG[15].reg = PORT_PINCFG_PULLEN | PORT_PINCFG_INEN;
   PORT->Group[0].OUTSET.reg = (1UL << 15);
@@ -252,12 +257,12 @@ void bootloader(void)
   if (DSU->DATA.reg)
     goto run_bootloader; /* CRC failed, so run bootloader */
 
-#ifndef USE_DBL_TAP
+#ifdef USE_IO_TAP
   if (!(PORT->Group[0].IN.reg & (1UL << 15)))
     goto run_bootloader; /* pin grounded, so run bootloader */
 
   return; /* we've checked everything and there is no reason to run the bootloader */
-#else
+#elif defined(USE_DBL_TAP)
   if (PM->RCAUSE.reg & PM_RCAUSE_POR)
     *DBL_TAP_PTR = 0; /* a power up event should never be considered a 'double tap' */
   
@@ -274,6 +279,11 @@ void bootloader(void)
   /* however, if execution reaches this point, the window of opportunity has closed and the "magic" disappears  */
   *DBL_TAP_PTR = 0;
   return;
+#elif defined(USE_MEMORY_TAP)
+  if (BOOTLOADERVARIABLE)
+    goto run_bootloader;
+  
+  return; /* we've checked everything and there is no reason to run the bootloader */
 #endif
 
 run_bootloader:
